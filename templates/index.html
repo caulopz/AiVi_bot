@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AiVi - Asistente Visual en Vivo</title>
+    <style>
+        /* ... (El CSS se mantiene sin cambios) ... */
+        :root { --color-fondo: #1E1E1E; --color-acento: #C8A46E; --color-texto: #F5F5F5; --color-sombra: rgba(0,0,0,0.5); --color-accion: #007bff; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: var(--color-fondo); color: var(--color-texto); }
+        #controls { margin-bottom: 20px; display: flex; gap: 10px; align-items: center; }
+        #camera-select, button { padding: 10px 18px; border-radius: 8px; font-size: 1em; cursor: pointer; border: none; font-weight: bold; transition: background-color 0.2s; }
+        #camera-select { background-color: #333; color: var(--color-texto); border: 1px solid var(--color-acento); font-weight: normal; }
+        #start-button { color: var(--color-fondo); background-color: var(--color-acento); }
+        #register-button { color: white; background-color: var(--color-accion); margin-top: 15px; display: none; }
+        #video-container { border: 2px solid var(--color-acento); border-radius: 12px; overflow: hidden; box-shadow: 0 8px 25px var(--color-sombra); background-color: #000; }
+        #webcam { display: block; transform: scaleX(-1); }
+        #result { margin-top: 25px; font-size: 2.5em; font-weight: bold; min-height: 60px; text-shadow: 0 2px 4px var(--color-sombra); }
+        /* --- NUEVO ESTILO PARA EL DEPURADOR --- */
+        #debug-text {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            background-color: rgba(0,0,0,0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <h1>AiVi - Detección en Vivo</h1>
+    <div id="controls">
+        <label for="camera-select">Elige tu cámara:</label>
+        <select id="camera-select"></select>
+        <button id="start-button">Iniciar AiVi</button>
+    </div>
+    <div id="video-container">
+        <video id="webcam" width="640" height="480" playsinline></video>
+    </div>
+    <h1 id="result">Presiona "Iniciar AiVi" para comenzar.</h1>
+    <button id="register-button">Registrar Persona</button>
+
+    <div id="debug-text">Debug: Esperando...</div>
+
+    <script>
+        // --- REFERENCIAS A ELEMENTOS HTML ---
+        const videoElement = document.getElementById('webcam');
+        const resultElement = document.getElementById('result');
+        const cameraSelect = document.getElementById('camera-select');
+        const startButton = document.getElementById('start-button');
+        const registerButton = document.getElementById('register-button');
+        const debugTextElement = document.getElementById('debug-text'); // Referencia al depurador
+        let analysisInterval;
+        let lastPersonAnnounced = "";
+        let isListeningForRegistration = false;
+
+        // --- CEREBRO DE VOZ (TTS Y STT) ---
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition;
+        
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.lang = 'es-CO';
+            recognition.continuous = false;
+            recognition.interimResults = false;
+        }
+
+        function speak(text, onEndCallback = () => {}) { /* ... código sin cambios ... */ window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text); utterance.lang = 'es-CO'; utterance.rate = 1.1; utterance.onend = onEndCallback; window.speechSynthesis.speak(utterance); }
+
+        function startListening(callback) {
+            if (!recognition) { debugTextElement.textContent = "Debug: Voz no soportada."; return; }
+            
+            debugTextElement.textContent = "Debug: Escuchando...";
+            
+            recognition.onresult = (event) => {
+                const command = event.results[0][0].transcript.toLowerCase().trim();
+                debugTextElement.textContent = `Debug: Escuchado -> "${command}"`;
+                callback(command);
+            };
+
+            recognition.onerror = (event) => {
+                debugTextElement.textContent = `Debug: Error de voz -> ${event.error}`;
+                console.error("Error en reconocimiento de voz:", event.error);
+            };
+            
+            try {
+                recognition.start();
+            } catch(e) {
+                console.error("Error al iniciar el reconocimiento:", e);
+                debugTextElement.textContent = "Debug: Error al iniciar escucha.";
+            }
+        }
+
+        // --- LÓGICA DE LA CÁMARA Y ANÁLISIS ---
+        // ... (getCameras, startSelectedCamera, analizarFotograma sin cambios grandes) ...
+        async function getCameras() { /* ... código sin cambios ... */ try { await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); const devices = await navigator.mediaDevices.enumerateDevices(); const videoDevices = devices.filter(device => device.kind === 'videoinput'); videoDevices.forEach(device => { const option = document.createElement('option'); option.value = device.deviceId; option.text = device.label || `Cámara ${cameraSelect.length + 1}`; cameraSelect.appendChild(option); }); } catch (error) { resultElement.textContent = "Error al listar dispositivos."; console.error("Error enumerando dispositivos:", error); } }
+        async function startSelectedCamera() { /* ... código sin cambios ... */ if (analysisInterval) clearInterval(analysisInterval); const selectedCameraId = cameraSelect.value; if (!selectedCameraId) { resultElement.textContent = "Por favor, selecciona una cámara."; return; } const constraints = { video: { deviceId: { exact: selectedCameraId } } }; try { const stream = await navigator.mediaDevices.getUserMedia(constraints); videoElement.srcObject = stream; videoElement.play(); videoElement.onloadedmetadata = () => { const message = "Apunte a un rostro..."; resultElement.textContent = message; speak(message); analysisInterval = setInterval(analizarFotograma, 2000); }; } catch (error) { resultElement.textContent = "No se pudo iniciar la cámara seleccionada."; } }
+        async function analizarFotograma() {
+            if (isListeningForRegistration) return;
+            const canvas = document.createElement('canvas'); canvas.width = videoElement.videoWidth; canvas.height = videoElement.videoHeight; const context = canvas.getContext('2d'); context.drawImage(videoElement, 0, 0, canvas.width, canvas.height); const imageData = canvas.toDataURL('image/jpeg');
+            try {
+                const response = await fetch('http://127.0.0.1:5000/analyze_vision', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: imageData }), });
+                const data = await response.json();
+                let currentPerson = "---"; if (data.people && data.people.length > 0) { currentPerson = data.people[0]; }
+                resultElement.textContent = currentPerson;
+                if (currentPerson !== lastPersonAnnounced && currentPerson !== "---") {
+                    let messageToSpeak = currentPerson;
+                    if (currentPerson === "Desconocido") {
+                        messageToSpeak = "Persona desconocida detectada. ¿Quieres registrarla?";
+                        isListeningForRegistration = true;
+                        speak(messageToSpeak, () => {
+                            startListening((command) => {
+                                if (command.includes("sí") || command.includes("registrar")) {
+                                    startRegistrationFlow();
+                                } else {
+                                    isListeningForRegistration = false;
+                                }
+                            });
+                        });
+                    } else { speak(messageToSpeak); }
+                    lastPersonAnnounced = currentPerson;
+                }
+            } catch (error) { resultElement.textContent = "Error de conexión."; }
+        }
+
+        // --- FLUJO DE REGISTRO POR VOZ (MODIFICADO) ---
+        async function startRegistrationFlow() {
+            clearInterval(analysisInterval);
+            speak("Iniciando registro.");
+            const capturedImages = [];
+            const TOTAL_PHOTOS = 3;
+
+            for (let i = 1; i <= TOTAL_PHOTOS; i++) {
+                // Usamos una promesa para asegurar que la voz termine antes de escuchar
+                await new Promise(resolve => speak(`Para la foto ${i}, prepárate y di la palabra 'captura'`, resolve));
+                
+                // Usamos una promesa para esperar el comando de voz
+                await new Promise(resolve => {
+                    startListening((command) => {
+                        // Hacemos la condición más flexible
+                        if (command.includes("captura")) {
+                            const canvas = document.createElement('canvas'); // ... captura ...
+                            canvas.width = videoElement.videoWidth; canvas.height = videoElement.videoHeight; const context = canvas.getContext('2d'); context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+                            capturedImages.push(canvas.toDataURL('image/jpeg'));
+                            speak("Capturada.");
+                            resolve(); // Resolvemos la promesa para pasar a la siguiente foto
+                        } else {
+                           // Si no es el comando, vuelve a pedirlo de forma recursiva
+                           speak("No te entendí. Por favor, di 'captura'.", () => startListening(command => { if(command.includes("captura")) { /*...captura...*/ resolve(); } } ));
+                        }
+                    });
+                });
+            }
+
+            let personName = null;
+            await new Promise(resolve => {
+                speak("He capturado las fotos. ¿Cuál es el nombre de la persona?", () => {
+                    startListening((command) => {
+                        personName = command;
+                        resolve();
+                    });
+});
+            });
+
+            if (personName) {
+                speak(`Registrando a ${personName}...`);
+                try {
+                    const response = await fetch('http://127.0.0.1:5000/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: personName, images: capturedImages }), });
+                    const data = await response.json();
+                    const message = (data.status === 'success') ? `${personName} ha sido registrado!` : "Hubo un error en el registro.";
+                    speak(message);
+                } catch (error) { speak("Error al conectar con el servidor para registrar."); }
+            } else { speak("Registro cancelado."); }
+            
+            setTimeout(() => {
+                lastPersonAnnounced = "";
+                isListeningForRegistration = false;
+                startSelectedCamera();
+            }, 4000);
+        }
+
+        // --- ASIGNACIÓN DE EVENTOS ---
+        startButton.onclick = startSelectedCamera;
+        getCameras();
+    </script>
+</body>
+</html>

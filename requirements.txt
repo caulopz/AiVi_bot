@@ -1,0 +1,10 @@
+Flask
+Flask-Cors
+Flask-Session
+face_recognition
+numpy
+opencv-python
+google-generativeai
+markdown
+PyMuPDF
+Pillow
